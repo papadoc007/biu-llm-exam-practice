@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<title>תרגול מבחן — LLMs, סוכנים וריבוי סוכנים</title>
+<style>
+:root{
+  --bg:#f6f7f9; --card:#fff; --fg:#14181f; --muted:#6b7280; --line:#e2e5ea;
+  --accent:#1f4e8c; --ok:#15803d; --okbg:#e8f5ec; --bad:#b91c1c; --badbg:#fdeced;
+  --warn:#a16207; --warnbg:#fdf6e3;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#12151a; --card:#1a1f27; --fg:#e6e9ee; --muted:#98a2b3; --line:#2b323d;
+    --accent:#7aa7e0; --ok:#4ade80; --okbg:#132a1c; --bad:#f87171; --badbg:#2c1416;
+    --warn:#fbbf24; --warnbg:#2a2312;}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:16px/1.65 "Segoe UI",Arial,sans-serif;padding:16px}
+.wrap{max-width:860px;margin:0 auto}
+h1{font-size:20px;margin:0 0 4px}
+.sub{color:var(--muted);font-size:13px;margin-bottom:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:14px}
+button{font:inherit;cursor:pointer;border-radius:8px;border:1px solid var(--line);
+  background:var(--card);color:var(--fg);padding:8px 14px}
+button:hover:not(:disabled){border-color:var(--accent)}
+button:disabled{cursor:default;opacity:.55}
+.modes{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.modes button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin:10px 0 4px}
+.bar i{display:block;height:100%;background:var(--accent);transition:width .25s}
+.meta{display:flex;justify-content:space-between;gap:10px;font-size:13px;color:var(--muted);flex-wrap:wrap}
+.qnum{font-size:13px;color:var(--muted);margin-bottom:6px}
+.qtext{font-size:18px;font-weight:600;margin-bottom:14px}
+ol.opts{list-style:none;margin:0;padding:0}
+ol.opts li{margin-bottom:8px}
+ol.opts button{display:flex;gap:10px;width:100%;text-align:right;padding:11px 13px;line-height:1.5}
+ol.opts button .k{flex:0 0 22px;color:var(--muted);font-weight:700}
+ol.opts button.correct{background:var(--okbg);border-color:var(--ok)}
+ol.opts button.correct .k{color:var(--ok)}
+ol.opts button.wrong{background:var(--badbg);border-color:var(--bad)}
+ol.opts button.wrong .k{color:var(--bad)}
+.why{margin-top:14px;padding:12px 14px;border-radius:8px;background:var(--okbg);
+  border:1px solid var(--ok);font-size:15px}
+.why .src{display:block;margin-top:7px;font-size:12px;color:var(--muted)}
+.why.unver{background:var(--warnbg);border-color:var(--warn)}
+.tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:99px;
+  border:1px solid var(--line);color:var(--muted);margin-inline-start:6px;vertical-align:middle}
+.tag.med{color:var(--warn);border-color:var(--warn)}
+.tag.low{color:var(--bad);border-color:var(--bad);font-weight:700}
+.foot{display:flex;justify-content:space-between;gap:8px;margin-top:14px;flex-wrap:wrap}
+label.chk{font-size:13px;color:var(--muted);display:flex;align-items:center;gap:6px;cursor:pointer}
+table{width:100%;border-collapse:collapse;font-size:14px}
+td,th{padding:5px 8px;border-bottom:1px solid var(--line);text-align:right}
+th{color:var(--muted);font-weight:600}
+.big{font-size:32px;font-weight:700}
+.hint{font-size:12px;color:var(--muted);margin-top:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>תרגול מבחן — מערכות בינה מלאכותית מתקדמות</h1>
+  <div class="sub">180 שאלות · מפתח תשובות מעוגן בחומרי הקורס · ההתקדמות נשמרת בדפדפן</div>
+
+  <div class="modes">
+    <button data-mode="practice" class="on">תרגול</button>
+    <button data-mode="exam">סימולציית מבחן</button>
+    <button data-mode="review">חזרה על טעויות</button>
+    <button data-mode="stats">סטטיסטיקה</button>
+    <button id="reset" style="margin-inline-start:auto">איפוס התקדמות</button>
+  </div>
+
+  <div class="card" id="panel"></div>
+</div>
+
+<script id="qs" type="application/json">__QUESTIONS__</script>
+<script>
+const QS = JSON.parse(document.getElementById('qs').textContent);
+const LS = 'biu-llm-quiz-v1';
+const KEYS = ['a','b','c','d'];
+
+let st = load();
+function load(){ try{ return JSON.parse(localStorage.getItem(LS)) || {} }catch{ return {} } }
+function save(){ localStorage.setItem(LS, JSON.stringify(st)) }
+function rec(id){ return st[id] || (st[id] = {box:1, seen:0, right:0, wrong:0, flag:false}) }
+
+let mode='practice', queue=[], pos=0, answered=null, examStart=0, examLog=[];
+const panel = document.getElementById('panel');
+
+document.querySelectorAll('.modes button[data-mode]').forEach(b=>{
+  b.onclick = ()=>{
+    document.querySelectorAll('.modes button[data-mode]').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on');
+    mode = b.dataset.mode;
+    start();
+  };
+});
+document.getElementById('reset').onclick = ()=>{
+  if(!confirm('לאפס את כל ההתקדמות והסטטיסטיקה?')) return;
+  st = {}; save(); start();
+};
+
+function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.random()*(i+1)|0; [a[i],a[j]]=[a[j],a[i]] } return a }
+
+// Leitner: box 1 drawn 5x as often as box 3. Unseen questions come first.
+function practiceQueue(){
+  const pool = [];
+  for(const q of QS){
+    const r = st[q.id];
+    const w = !r ? 6 : (r.box===1 ? 5 : r.box===2 ? 2 : 1);
+    for(let i=0;i<w;i++) pool.push(q);
+  }
+  const out=[], used=new Set();
+  shuffle(pool);
+  for(const q of pool){ if(!used.has(q.id)){ used.add(q.id); out.push(q) } }
+  return out;
+}
+
+function start(){
+  answered=null; pos=0; examLog=[];
+  if(mode==='stats') return renderStats();
+  if(mode==='exam'){ queue = shuffle(QS.slice()); examStart = Date.now(); }
+  else if(mode==='review'){
+    queue = shuffle(QS.filter(q=>{ const r=st[q.id]; return r && (r.wrong>0 || r.flag) }));
+    if(!queue.length){
+      panel.innerHTML = '<p>אין עדיין שאלות שטעית בהן או שסימנת. התחל בתרגול.</p>';
+      return;
+    }
+  }
+  else queue = practiceQueue();
+  render();
+}
+
+function render(){
+  if(pos >= queue.length) return mode==='exam' ? renderExamResults() : renderDone();
+  const q = queue[pos], r = rec(q.id);
+  const unver = q.conf !== 'high';
+  const confTag = q.conf==='high' ? '' :
+    `<span class="tag ${q.conf}">${q.conf==='med' ? 'ודאות בינונית' : 'לא מאומת — בדוק'}</span>`;
+
+  panel.innerHTML = `
+    <div class="meta">
+      <span>${modeName()} · ${pos+1} מתוך ${queue.length}</span>
+      <span>${q.topic}${mode!=='exam'?confTag:''}</span>
+    </div>
+    <div class="bar"><i style="width:${(pos/queue.length*100).toFixed(1)}%"></i></div>
+    <div class="qnum">שאלה #${q.id}${mode==='exam'?'':` · תיבה ${r.box}/3 · נכון ${r.right} · טעות ${r.wrong}`}</div>
+    <div class="qtext">${esc(q.q)}</div>
+    <ol class="opts">${q.opts.map((o,i)=>
+      `<li><button data-i="${i}"><span class="k">${KEYS[i]}.</span><span>${esc(o)}</span></button></li>`).join('')}</ol>
+    <div id="after"></div>
+    <div class="foot">
+      <label class="chk"><input type="checkbox" id="flag" ${r.flag?'checked':''}> סמן לבדיקה (f)</label>
+      <button id="next" disabled>הבא ←</button>
+    </div>
+    <div class="hint">מקשים: 1-4 לבחירת תשובה · Enter לשאלה הבאה · f לסימון</div>`;
+
+  panel.querySelectorAll('ol.opts button').forEach(b=> b.onclick = ()=> pick(+b.dataset.i));
+  document.getElementById('flag').onchange = e=>{ rec(q.id).flag = e.target.checked; save() };
+  document.getElementById('next').onclick = next;
+}
+
+function pick(i){
+  if(answered !== null) return;
+  answered = i;
+  const q = queue[pos], r = rec(q.id), ok = i === q.correct;
+
+  r.seen++; ok ? r.right++ : r.wrong++;
+  r.box = ok ? Math.min(3, r.box+1) : 1;
+  save();
+  if(mode==='exam') examLog.push({id:q.id, ok});
+
+  const btns = panel.querySelectorAll('ol.opts button');
+  btns.forEach(b=>b.disabled = true);
+  btns[q.correct].classList.add('correct');
+  if(!ok) btns[i].classList.add('wrong');
+
+  if(mode !== 'exam'){
+    document.getElementById('after').innerHTML =
+      `<div class="why${q.conf!=='high'?' unver':''}">${esc(q.why)}
+        <span class="src">מקור: ${esc(q.src)}</span></div>`;
+  }
+  document.getElementById('next').disabled = false;
+  document.getElementById('next').focus();
+}
+
+function next(){ answered=null; pos++; render() }
+
+function renderDone(){
+  panel.innerHTML = `<p>סיימת את כל ${queue.length} השאלות במצב זה.</p>
+    <button onclick="location.reload()">סבב חדש</button>`;
+}
+
+function renderExamResults(){
+  const right = examLog.filter(x=>x.ok).length;
+  const mins = Math.round((Date.now()-examStart)/60000);
+  const missed = examLog.filter(x=>!x.ok).map(x=>x.id).sort((a,b)=>a-b);
+  panel.innerHTML = `
+    <div class="big">${right} / ${examLog.length}</div>
+    <p>${(right/examLog.length*100).toFixed(1)}% · ${mins} דקות</p>
+    <p><b>שאלות שטעית בהן:</b><br>${missed.length ? missed.map(i=>'#'+i).join(', ') : 'אף אחת.'}</p>
+    <p>עבור למצב "חזרה על טעויות" כדי לתרגל אותן.</p>
+    <button onclick="location.reload()">מבחן חדש</button>`;
+}
+
+function renderStats(){
+  const seen = QS.filter(q=>st[q.id]?.seen);
+  const mastered = QS.filter(q=>st[q.id]?.box===3);
+  const byTopic = {};
+  for(const q of QS){
+    const t = byTopic[q.topic] || (byTopic[q.topic]={n:0, right:0, wrong:0});
+    t.n++;
+    const r = st[q.id];
+    if(r){ t.right += r.right; t.wrong += r.wrong }
+  }
+  const unver = QS.filter(q=>q.conf!=='high');
+  panel.innerHTML = `
+    <div class="meta"><span>נראו ${seen.length}/${QS.length}</span><span>בתיבה 3 (שונן): ${mastered.length}</span></div>
+    <div class="bar"><i style="width:${(mastered.length/QS.length*100).toFixed(1)}%"></i></div>
+    <table><tr><th>נושא</th><th>שאלות</th><th>נכון</th><th>טעות</th><th>דיוק</th></tr>
+    ${Object.entries(byTopic).sort((a,b)=>b[1].n-a[1].n).map(([k,v])=>{
+      const tot = v.right+v.wrong;
+      return `<tr><td>${esc(k)}</td><td>${v.n}</td><td>${v.right}</td><td>${v.wrong}</td>
+        <td>${tot? (v.right/tot*100).toFixed(0)+'%' : '—'}</td></tr>`;
+    }).join('')}</table>
+    <p style="margin-top:16px"><b>שאלות לא מאומתות מול המקורות (${unver.length}):</b><br>
+      ${unver.map(q=>`#${q.id}`).join(', ') || 'אין.'}</p>`;
+}
+
+function modeName(){ return {practice:'תרגול', exam:'סימולציית מבחן', review:'חזרה על טעויות'}[mode] }
+function esc(s){ return String(s).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])) }
+
+document.addEventListener('keydown', e=>{
+  if(e.target.tagName === 'INPUT') return;
+  if(mode==='stats') return;
+  if(e.key>='1' && e.key<='4') pick(+e.key-1);
+  else if(e.key==='Enter'){ const n=document.getElementById('next'); if(n && !n.disabled) next() }
+  else if(e.key==='f'){ const f=document.getElementById('flag'); if(f){ f.checked=!f.checked; f.onchange({target:f}) } }
+});
+
+start();
+</script>
+</body>
+</html>
